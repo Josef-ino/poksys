@@ -1,28 +1,14 @@
+#----------- BEZ EMAILOVÉ FUNKCE ---------------------------    
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, scrolledtext
 import datetime
 import json
 import os
-import smtplib
-from email.message import EmailMessage
-import secure_cred  # soubor s přihlašovacími údaji pro SMTP
 
 # ------------------- HELPERS -------------------
 def validate_email(email):
     import re
     return re.match(r"[^@]+@[^@]+\.[^@]+", email)
-
-def send_receipt_email_txt(to_email, subject, body, txt_filename, smtp_server, smtp_port, smtp_user, smtp_pass):
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = smtp_user
-    msg['To'] = to_email
-    msg.set_content(body)
-    with open(txt_filename, "rb") as f:
-        msg.add_attachment(f.read(), maintype="text", subtype="plain", filename=os.path.basename(txt_filename))
-    with smtplib.SMTP_SSL(smtp_server, smtp_port) as smtp:
-        smtp.login(smtp_user, smtp_pass)
-        smtp.send_message(msg)
 
 # ------------------- DATA MANAGERS -------------------
 class ProductManager:
@@ -85,7 +71,6 @@ DEFAULT_RECEIPT_FORMAT = {
     "items": "{tabulka_polozek}",
     "total": "CELKEM K ÚHRADĚ: {celkem} CZK",
     "footer": "{company_footer}\nVytištěno: {cas_tisku}",
-    "items_align": "left"
 }
 
 # ------------------- MAIN APPLICATION -------------------
@@ -313,11 +298,25 @@ class PokladniSystem:
     def show_order_summary(self, order_id, receipt_txt):
         win=tk.Toplevel(self.root)
         win.title(f"Shrnutí objednávky {order_id}")
-        win.geometry("600x400")
-        text=tk.Text(win)
+        win.geometry("650x500")
+
+        # Scrollované textové pole
+        text = scrolledtext.ScrolledText(win, wrap=tk.WORD)
         text.insert("1.0", receipt_txt)
-        text.pack(fill="both",expand=True)
-        ttk.Button(win,text="Zavřít",command=win.destroy).pack(pady=5)
+        text.configure(state="disabled")
+        text.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Souhrn tlačítka
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(pady=5)
+        ttk.Button(btn_frame,text="Tisk/uložit účtenku",command=lambda:self.save_receipt_file(receipt_txt,order_id)).pack(side="left", padx=5)
+        ttk.Button(btn_frame,text="Zavřít",command=win.destroy).pack(side="left", padx=5)
+
+    def save_receipt_file(self, receipt_txt, order_id):
+        filename=f"receipt_{order_id}.txt"
+        with open(filename,"w",encoding="utf-8") as f:
+            f.write(receipt_txt)
+        messagebox.showinfo("Uloženo",f"Účtenka byla uložena jako {filename}")
 
     # ------------------- SETTINGS -------------------
     def set_receipt_format(self):
@@ -340,27 +339,37 @@ class PokladniSystem:
     def show_history(self):
         win=tk.Toplevel(self.root)
         win.title("Historie prodeje")
-        win.geometry("700x400")
-        tree=ttk.Treeview(win,columns=("Objednávka","Datum","Platba","Sleva","Celkem"),show="headings")
-        tree.heading("Objednávka",text="Objednávka")
-        tree.heading("Datum",text="Datum")
-        tree.heading("Platba",text="Platba")
-        tree.heading("Sleva",text="Sleva %")
-        tree.heading("Celkem",text="Celkem CZK")
-        tree.pack(fill="both",expand=True)
-
+        win.geometry("800x400")
+        tree = ttk.Treeview(win, columns=("Objednávka","Datum","Položky","Platba","Sleva"), show="headings")
+        tree.heading("Objednávka", text="Objednávka")
+        tree.heading("Datum", text="Datum")
+        tree.heading("Položky", text="Počet položek")
+        tree.heading("Platba", text="Platba")
+        tree.heading("Sleva", text="Sleva %")
+        tree.pack(fill="both", expand=True)
         for sale in self.sales_manager.sales_history:
-            celkem=sum([i["price"]*i["count"] for i in sale["items"]])*(1-sale.get("discount",0)/100.0)
-            tree.insert("", "end", values=(sale["order_id"], sale["date"], sale["payment_type"], sale.get("discount",0), f"{celkem:.2f}"))
+            tree.insert("", "end", values=(
+                sale["order_id"],
+                sale["date"],
+                sum([i["count"] for i in sale["items"]]),
+                sale.get("payment_type",""),
+                sale.get("discount",0)
+            ))
+        tree.bind("<Double-1>", lambda e: self.open_receipt_from_history(tree))
 
-        def show_receipt(event):
-            sel=tree.focus()
-            if not sel: return
-            idx=tree.index(sel)
-            receipt_txt=self.sales_manager.sales_history[idx]["receipt_txt"]
-            self.show_order_summary(tree.item(sel)["values"][0], receipt_txt)
-
-        tree.bind("<Double-1>",show_receipt)
+    def open_receipt_from_history(self, tree):
+        selected=tree.focus()
+        if not selected: return
+        idx=tree.index(selected)
+        sale=self.sales_manager.sales_history[idx]
+        win=tk.Toplevel(self.root)
+        win.title(f"Účtenka {sale['order_id']}")
+        win.geometry("650x500")
+        text=scrolledtext.ScrolledText(win, wrap=tk.WORD)
+        text.insert("1.0", sale.get("receipt_txt",""))
+        text.configure(state="disabled")
+        text.pack(fill="both", expand=True,padx=10,pady=10)
+        ttk.Button(win,text="Zavřít",command=win.destroy).pack(pady=5)
 
     # ------------------- SYSTEM -------------------
     def reset_system(self):
@@ -415,3 +424,4 @@ if __name__=="__main__":
     root=tk.Tk()
     app=PokladniSystem(root)
     root.mainloop()
+
